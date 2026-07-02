@@ -103,7 +103,7 @@ def active():
     ]
     return {"total": total, "regions": regions}
 
-
+@app.head("/api/regions")
 @app.get("/api/regions")
 def region_list():
     """So the client's dropdown always matches the server's supported list."""
