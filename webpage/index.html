@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KRAKEN PRIME — Live Fleet</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:        #0d0d1a;
+    --panel:     #16213e;
+    --ink:       #e8e6df;
+    --ink-dim:   #7c8299;
+    --accent:    #df7d59;
+    --accent-hi: #f0a37f;
+    --grid:      rgba(223,125,89,0.08);
+    --blip:      #44ff88;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; }
+  body{
+    background:
+      radial-gradient(ellipse at 20% -10%, rgba(223,125,89,0.10), transparent 55%),
+      var(--bg);
+    color:var(--ink);
+    font-family:'JetBrains Mono', monospace;
+    overflow-x:hidden;
+  }
+
+  /* faint plotter grid, subtly animated */
+  .grid-overlay{
+    position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 42px 42px;
+    animation: drift 60s linear infinite;
+  }
+  @keyframes drift{ from{background-position:0 0;} to{background-position:420px 420px;} }
+
+  header{
+    position:relative; z-index:1;
+    display:flex; align-items:baseline; justify-content:space-between;
+    padding:26px 5vw 10px;
+    border-bottom:1px solid rgba(223,125,89,0.15);
+  }
+  .brand{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:700; font-size:20px; letter-spacing:0.5px; color:var(--accent-hi);
+  }
+  .brand span{ color:var(--ink-dim); font-weight:500; font-size:13px; margin-left:10px; }
+  nav a{ color:var(--ink-dim); text-decoration:none; font-size:12px; margin-left:22px; letter-spacing:0.5px; }
+  nav a:hover{ color:var(--accent-hi); }
+
+  .hero{
+    position:relative; z-index:1;
+    padding:34px 5vw 18px;
+    display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:20px;
+  }
+  .eyebrow{
+    color:var(--ink-dim); font-size:11px; letter-spacing:2.5px; text-transform:uppercase;
+    display:flex; align-items:center; gap:8px;
+  }
+  .pulse-dot{
+    width:8px; height:8px; border-radius:50%; background:var(--blip);
+    box-shadow:0 0 0 0 rgba(68,255,136,0.6);
+    animation:pulse 1.8s infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 rgba(68,255,136,0.55); }
+    70%{ box-shadow:0 0 0 10px rgba(68,255,136,0); }
+    100%{ box-shadow:0 0 0 0 rgba(68,255,136,0); }
+  }
+  .counter{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:700; font-size:clamp(48px, 8vw, 96px); line-height:1;
+    color:var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .counter-label{ color:var(--ink-dim); font-size:13px; margin-top:6px; }
+  .regions-count{ text-align:right; }
+  .regions-count .num{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:28px; color:var(--accent-hi); }
+  .regions-count .lbl{ color:var(--ink-dim); font-size:11px; letter-spacing:1px; text-transform:uppercase; }
+
+  #map{
+    position:relative; z-index:1;
+    margin:18px 5vw 6px; height:52vh; min-height:340px;
+    border:1px solid rgba(223,125,89,0.18); border-radius:10px; overflow:hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  }
+
+  .leaderboard{
+    position:relative; z-index:1;
+    margin:8px 5vw 40px; padding:18px 20px;
+    background:var(--panel); border:1px solid rgba(223,125,89,0.14); border-radius:10px;
+  }
+  .leaderboard h2{
+    font-family:'Space Grotesk', sans-serif; font-size:13px; letter-spacing:1.5px;
+    text-transform:uppercase; color:var(--ink-dim); margin:0 0 12px;
+  }
+  .lb-row{
+    display:flex; align-items:center; gap:12px; padding:7px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    font-size:13px;
+  }
+  .lb-row:last-child{ border-bottom:none; }
+  .lb-name{ flex:1; color:var(--ink); }
+  .lb-bar-track{ flex:2; height:6px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; }
+  .lb-bar{ height:100%; background:linear-gradient(90deg, var(--accent), var(--accent-hi)); border-radius:3px; }
+  .lb-count{ width:34px; text-align:right; color:var(--accent-hi); font-weight:700; }
+
+  .empty-note{ color:var(--ink-dim); font-size:12px; padding:6px 0; }
+
+  footer{
+    position:relative; z-index:1;
+    text-align:center; color:var(--ink-dim); font-size:11px; padding:0 5vw 30px;
+  }
+  footer a{ color:var(--ink-dim); }
+
+  .leaflet-container{ background:#0a0a14 !important; }
+  .kraken-marker{
+    width:14px; height:14px; border-radius:50%;
+    background:var(--blip);
+    box-shadow:0 0 0 0 rgba(68,255,136,0.6);
+    animation:pulse 2s infinite;
+    border:2px solid #0a0a14;
+  }
+  .leaflet-popup-content-wrapper{
+    background:var(--panel); color:var(--ink); border-radius:6px;
+    font-family:'JetBrains Mono', monospace; font-size:12px;
+  }
+  .leaflet-popup-tip{ background:var(--panel); }
+</style>
+</head>
+<body>
+
+<div class="grid-overlay"></div>
+
+<header>
+  <div class="brand">⚔ KRAKEN PRIME<span>live fleet</span></div>
+  <nav>
+    <a href="https://github.com/syskraken" target="_blank">GitHub</a>
+    <a href="https://discord.gg/jV7ymDtH7F" target="_blank">Discord</a>
+    <a href="/privacy">Privacy</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div>
+    <div class="eyebrow"><span class="pulse-dot"></span> currently deployed</div>
+    <div class="counter" id="counter">–</div>
+    <div class="counter-label">captains with the app open right now</div>
+  </div>
+  <div class="regions-count">
+    <div class="num" id="region-count">–</div>
+    <div class="lbl">regions represented</div>
+  </div>
+</section>
+
+<div id="map"></div>
+
+<div class="leaderboard">
+  <h2>By region</h2>
+  <div id="lb-body"><div class="empty-note">Loading…</div></div>
+</div>
+
+<footer>
+  Locations are self-selected by each user, not detected from IP or device GPS.
+  See the <a href="/privacy">privacy policy</a> for what's collected and why.
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // Point this at wherever telemetry_server.py is deployed.
+  const API_BASE = "https://kraken.protectiva.site";
+  const POLL_MS = 5000;
+
+  const map = L.map('map', { zoomControl: true, attributionControl: false, worldCopyJump: true })
+    .setView([20, 10], 2);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 12
+  }).addTo(map);
+
+  const markers = {};   // code -> L.circleMarker
+
+  function radiusFor(count){ return 6 + Math.sqrt(count) * 4; }
+
+  async function refresh(){
+    try{
+      const res = await fetch(`${API_BASE}/api/active`, { cache: "no-store" });
+      const data = await res.json();
+
+      document.getElementById('counter').textContent = data.total.toLocaleString();
+      document.getElementById('region-count').textContent = data.regions.length;
+
+      const seen = new Set();
+      const sorted = [...data.regions].sort((a,b) => b.count - a.count);
+
+      // Update / add markers
+      for(const r of sorted){
+        seen.add(r.code);
+        const icon = L.divIcon({ className: '', html: '<div class="kraken-marker"></div>', iconSize:[14,14] });
+        if(markers[r.code]){
+          markers[r.code].marker.setLatLng([r.lat, r.lon]);
+          markers[r.code].marker.setPopupContent(`<b>${r.name}</b><br>${r.count} online`);
+        } else {
+          const m = L.marker([r.lat, r.lon], { icon }).addTo(map)
+            .bindPopup(`<b>${r.name}</b><br>${r.count} online`);
+          markers[r.code] = { marker: m };
+        }
+      }
+      // Remove markers for regions that dropped to zero
+      for(const code of Object.keys(markers)){
+        if(!seen.has(code)){ map.removeLayer(markers[code].marker); delete markers[code]; }
+      }
+
+      // Leaderboard
+      const body = document.getElementById('lb-body');
+      if(sorted.length === 0){
+        body.innerHTML = '<div class="empty-note">No one on the map right now — could be you.</div>';
+      } else {
+        const max = sorted[0].count;
+        body.innerHTML = sorted.map(r => `
+          <div class="lb-row">
+            <div class="lb-name">${r.name}</div>
+            <div class="lb-bar-track"><div class="lb-bar" style="width:${(r.count/max*100).toFixed(0)}%"></div></div>
+            <div class="lb-count">${r.count}</div>
+          </div>`).join('');
+      }
+    } catch(e){
+      document.getElementById('counter').textContent = '—';
+      console.warn('Fleet tracker: could not reach API', e);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>
