@@ -241,20 +241,18 @@
   const API_BASE = "https://kraken.protectiva.site";
   const POLL_MS = 5000;
 
-  // ── Global map: one world, always filling the viewport ─────
-  // "Cover" strategy: the minimum zoom is whatever makes the world map
-  // span the entire viewport, so zooming out can never reveal gray gaps.
-  const WORLD = L.latLngBounds([[-85, -180], [85, 180]]);
+  // ── Global map: one world, no repeats, fitted to viewport ──
+  const WORLD = L.latLngBounds([[-58, -180], [78, 180]]);
 
   const map = L.map('map', {
     zoomControl: false,
     attributionControl: false,
     worldCopyJump: false,
-    zoomSnap: 0.25,          // fractional zoom → world edge lines up with viewport edge
-    zoomDelta: 0.5,
+    zoomSnap: 0.25,          // allows fractional zoom so the whole world fits exactly
+    minZoom: 1.5,
     maxZoom: 10,
-    maxBounds: WORLD,        // can't pan off the map
-    maxBoundsViscosity: 1.0,
+    maxBounds: [[-85, -195], [85, 195]],
+    maxBoundsViscosity: 0.9,
   });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -266,34 +264,22 @@
     bounds: [[-90, -180], [90, 180]],
   }).addTo(map);
 
-  function coverWorld(reset){
-    // getBoundsZoom(bounds, inside=true) = zoom at which the bounds COVER
-    // the viewport (fills it completely) rather than fit inside it.
-    const coverZoom = map.getBoundsZoom(WORLD, true);
-    map.setMinZoom(coverZoom);
-    if (reset || map.getZoom() < coverZoom){
-      map.setView([22, 10], coverZoom, { animate: false });
-    }
-  }
-  coverWorld(true);
+  function fitWorld(){ map.fitBounds(WORLD, { animate: false }); }
+  fitWorld();
 
-  // On resize, recompute the fill zoom. Only recenter if the user
-  // hasn't taken control of the view themselves.
+  // Re-fit on resize, but stop auto-fitting once the user zooms/pans themselves.
   let userMoved = false;
   map.on('zoomstart dragstart', (e) => { if (e && e.originalEvent) userMoved = true; });
   let rT;
   window.addEventListener('resize', () => {
     clearTimeout(rT);
-    rT = setTimeout(() => coverWorld(!userMoved), 150);
+    rT = setTimeout(() => { if (!userMoved) fitWorld(); }, 150);
   });
 
   // ── Helpers ────────────────────────────────────────────────
-  // Flag emoji don't render on Windows (they show as plain letters),
-  // so use small flag images instead.
-  function flagImg(code){
-    if (!code || code.length !== 2 || code === '??') return '<span>🌐</span>';
-    const cc = code.toLowerCase();
-    return `<img src="https://flagcdn.com/20x15/${cc}.png" width="20" height="15" alt="${cc}" style="border-radius:2px;vertical-align:-2px;">`;
+  function flagEmoji(code){
+    if (!code || code.length !== 2 || code === '??') return '🌐';
+    return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1A5 + c.charCodeAt(0)));
   }
   function esc(s){
     return String(s ?? '').replace(/[&<>"']/g, c =>
@@ -345,7 +331,7 @@
       for(const p of data.points){
         seen.add(p.id);
         const label = p.city ? `${esc(p.city)}, ${esc(p.country)}` : esc(p.country || 'Unknown');
-        const popup = `<b>${flagImg(p.country_code)} ${label}</b>`;
+        const popup = `<b>${flagEmoji(p.country_code)} ${label}</b>`;
         if(markers[p.id]){
           markers[p.id].setLatLng([p.lat, p.lon]);
           markers[p.id].setPopupContent(popup);
@@ -366,7 +352,7 @@
         const max = sorted[0].count;
         body.innerHTML = sorted.map(r => `
           <div class="lb-row">
-            <div class="lb-flag">${flagImg(r.code)}</div>
+            <div class="lb-flag">${flagEmoji(r.code)}</div>
             <div class="lb-name">${esc(r.name)}</div>
             <div class="lb-bar-track"><div class="lb-bar" style="width:${(r.count/max*100).toFixed(0)}%"></div></div>
             <div class="lb-count">${r.count}</div>
