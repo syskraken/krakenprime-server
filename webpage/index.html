@@ -9,59 +9,85 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:        #0d0d1a;
-    --panel:     #16213e;
+    --bg:        #0a0a14;
+    --panel:     rgba(18, 26, 48, 0.82);
+    --panel-brd: rgba(223,125,89,0.22);
     --ink:       #e8e6df;
     --ink-dim:   #7c8299;
     --accent:    #df7d59;
     --accent-hi: #f0a37f;
-    --grid:      rgba(223,125,89,0.08);
     --blip:      #44ff88;
+    --danger:    #ff5566;
   }
   *{ box-sizing:border-box; }
   html,body{ height:100%; margin:0; }
   body{
-    background:
-      radial-gradient(ellipse at 20% -10%, rgba(223,125,89,0.10), transparent 55%),
-      var(--bg);
+    background:var(--bg);
     color:var(--ink);
     font-family:'JetBrains Mono', monospace;
-    overflow-x:hidden;
+    overflow:hidden;
   }
 
-  /* faint plotter grid, subtly animated */
-  .grid-overlay{
-    position:fixed; inset:0; pointer-events:none; z-index:0;
-    background-image:
-      linear-gradient(var(--grid) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-    background-size: 42px 42px;
-    animation: drift 60s linear infinite;
+  /* ── Full-viewport map is the stage ─────────────────────── */
+  #map{
+    position:fixed; inset:0; z-index:0;
+    background:#0a0a14;
   }
-  @keyframes drift{ from{background-position:0 0;} to{background-position:420px 420px;} }
+  .leaflet-container{ background:#0a0a14 !important; }
 
-  header{
-    position:relative; z-index:1;
-    display:flex; align-items:baseline; justify-content:space-between;
-    padding:26px 5vw 10px;
-    border-bottom:1px solid rgba(223,125,89,0.15);
+  /* subtle vignette + scanlines over the map for atmosphere */
+  .fx{
+    position:fixed; inset:0; z-index:400; pointer-events:none;
+    background:
+      radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(6,8,16,0.55) 100%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0 1px, transparent 1px 3px);
+  }
+
+  /* ── HUD panels ─────────────────────────────────────────── */
+  .hud{
+    position:fixed; z-index:500;
+    background:var(--panel);
+    border:1px solid var(--panel-brd);
+    border-radius:12px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow:0 16px 48px rgba(0,0,0,0.5);
+  }
+
+  header.hud{
+    top:16px; left:16px; right:16px;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 20px;
+    animation: dropIn .6s cubic-bezier(.2,.9,.3,1.2) both;
   }
   .brand{
     font-family:'Space Grotesk', sans-serif;
-    font-weight:700; font-size:20px; letter-spacing:0.5px; color:var(--accent-hi);
+    font-weight:700; font-size:18px; letter-spacing:0.5px; color:var(--accent-hi);
+    display:flex; align-items:baseline; gap:10px;
   }
-  .brand span{ color:var(--ink-dim); font-weight:500; font-size:13px; margin-left:10px; }
-  nav a{ color:var(--ink-dim); text-decoration:none; font-size:12px; margin-left:22px; letter-spacing:0.5px; }
+  .brand span{ color:var(--ink-dim); font-weight:500; font-size:12px; }
+  nav{ display:flex; align-items:center; gap:20px; }
+  nav a{ color:var(--ink-dim); text-decoration:none; font-size:12px; letter-spacing:0.5px; transition:color .15s; }
   nav a:hover{ color:var(--accent-hi); }
+  .conn{
+    display:flex; align-items:center; gap:7px;
+    font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--ink-dim);
+  }
+  .conn-dot{ width:8px; height:8px; border-radius:50%; background:var(--blip);
+    box-shadow:0 0 0 0 rgba(68,255,136,0.6); animation:pulse 1.8s infinite; }
+  .conn.down .conn-dot{ background:var(--danger); animation:none; box-shadow:0 0 8px rgba(255,85,102,0.7); }
+  .conn.down{ color:var(--danger); }
 
-  .hero{
-    position:relative; z-index:1;
-    padding:34px 5vw 18px;
-    display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:20px;
+  /* Live counter — bottom left */
+  .stats.hud{
+    left:16px; bottom:16px;
+    padding:18px 22px 16px;
+    min-width:250px;
+    animation: riseIn .6s .15s cubic-bezier(.2,.9,.3,1.2) both;
   }
   .eyebrow{
-    color:var(--ink-dim); font-size:11px; letter-spacing:2.5px; text-transform:uppercase;
-    display:flex; align-items:center; gap:8px;
+    color:var(--ink-dim); font-size:10px; letter-spacing:2.5px; text-transform:uppercase;
+    display:flex; align-items:center; gap:8px; margin-bottom:6px;
   }
   .pulse-dot{
     width:8px; height:8px; border-radius:50%; background:var(--blip);
@@ -70,109 +96,143 @@
   }
   @keyframes pulse{
     0%{ box-shadow:0 0 0 0 rgba(68,255,136,0.55); }
-    70%{ box-shadow:0 0 0 10px rgba(68,255,136,0); }
+    70%{ box-shadow:0 0 0 12px rgba(68,255,136,0); }
     100%{ box-shadow:0 0 0 0 rgba(68,255,136,0); }
   }
   .counter{
     font-family:'Space Grotesk', sans-serif;
-    font-weight:700; font-size:clamp(48px, 8vw, 96px); line-height:1;
+    font-weight:700; font-size:clamp(44px, 7vw, 76px); line-height:1;
     color:var(--ink);
     font-variant-numeric: tabular-nums;
+    text-shadow:0 0 30px rgba(68,255,136,0.15);
   }
-  .counter-label{ color:var(--ink-dim); font-size:13px; margin-top:6px; }
-  .regions-count{ text-align:right; }
-  .regions-count .num{ font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:28px; color:var(--accent-hi); }
-  .regions-count .lbl{ color:var(--ink-dim); font-size:11px; letter-spacing:1px; text-transform:uppercase; }
-
-  #map{
-    position:relative; z-index:1;
-    margin:18px 5vw 6px; height:52vh; min-height:340px;
-    border:1px solid rgba(223,125,89,0.18); border-radius:10px; overflow:hidden;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  .counter-label{ color:var(--ink-dim); font-size:11px; margin-top:6px; }
+  .substats{
+    display:flex; gap:26px; margin-top:14px; padding-top:12px;
+    border-top:1px solid rgba(255,255,255,0.06);
   }
+  .substat .num{
+    font-family:'Space Grotesk', sans-serif; font-weight:700; font-size:22px;
+    color:var(--accent-hi); font-variant-numeric: tabular-nums;
+  }
+  .substat .lbl{ color:var(--ink-dim); font-size:9px; letter-spacing:1.5px; text-transform:uppercase; margin-top:2px; }
 
-  .leaderboard{
-    position:relative; z-index:1;
-    margin:8px 5vw 40px; padding:18px 20px;
-    background:var(--panel); border:1px solid rgba(223,125,89,0.14); border-radius:10px;
+  /* Leaderboard — right side */
+  .leaderboard.hud{
+    right:16px; top:76px; bottom:16px;
+    width:min(300px, 78vw);
+    display:flex; flex-direction:column;
+    padding:16px 18px;
+    animation: slideIn .6s .25s cubic-bezier(.2,.9,.3,1.2) both;
   }
   .leaderboard h2{
-    font-family:'Space Grotesk', sans-serif; font-size:13px; letter-spacing:1.5px;
+    font-family:'Space Grotesk', sans-serif; font-size:12px; letter-spacing:2px;
     text-transform:uppercase; color:var(--ink-dim); margin:0 0 12px;
+    display:flex; justify-content:space-between; align-items:baseline;
   }
+  .leaderboard h2 .updated{ font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:0.5px; text-transform:none; }
+  .lb-scroll{ overflow-y:auto; flex:1; margin-right:-6px; padding-right:6px; }
+  .lb-scroll::-webkit-scrollbar{ width:4px; }
+  .lb-scroll::-webkit-scrollbar-thumb{ background:rgba(223,125,89,0.3); border-radius:2px; }
   .lb-row{
-    display:flex; align-items:center; gap:12px; padding:7px 0;
+    display:flex; align-items:center; gap:10px; padding:8px 0;
     border-bottom:1px solid rgba(255,255,255,0.04);
-    font-size:13px;
+    font-size:12px;
   }
   .lb-row:last-child{ border-bottom:none; }
-  .lb-name{ flex:1; color:var(--ink); }
-  .lb-bar-track{ flex:2; height:6px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; }
-  .lb-bar{ height:100%; background:linear-gradient(90deg, var(--accent), var(--accent-hi)); border-radius:3px; }
-  .lb-count{ width:34px; text-align:right; color:var(--accent-hi); font-weight:700; }
-
-  .empty-note{ color:var(--ink-dim); font-size:12px; padding:6px 0; }
+  .lb-flag{ font-size:16px; width:22px; text-align:center; flex:none; }
+  .lb-name{ flex:1; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .lb-bar-track{ flex:0 0 72px; height:5px; background:rgba(255,255,255,0.06); border-radius:3px; overflow:hidden; }
+  .lb-bar{ height:100%; background:linear-gradient(90deg, var(--accent), var(--accent-hi)); border-radius:3px; transition:width .5s ease; }
+  .lb-count{ width:30px; text-align:right; color:var(--accent-hi); font-weight:700; font-variant-numeric:tabular-nums; }
+  .empty-note{ color:var(--ink-dim); font-size:11px; padding:6px 0; line-height:1.6; }
 
   footer{
-    position:relative; z-index:1;
-    text-align:center; color:var(--ink-dim); font-size:11px; padding:0 5vw 30px;
+    position:fixed; z-index:500; left:0; right:0; bottom:0;
+    text-align:center; color:rgba(124,130,153,0.75); font-size:10px; padding:6px 5vw;
+    pointer-events:none;
   }
-  footer a{ color:var(--ink-dim); }
+  footer a{ color:rgba(124,130,153,0.9); pointer-events:auto; }
 
-  .leaflet-container{ background:#0a0a14 !important; }
+  /* Markers */
   .kraken-marker{
-    width:14px; height:14px; border-radius:50%;
+    width:12px; height:12px; border-radius:50%;
     background:var(--blip);
-    box-shadow:0 0 0 0 rgba(68,255,136,0.6);
+    box-shadow:0 0 0 0 rgba(68,255,136,0.6), 0 0 10px rgba(68,255,136,0.8);
     animation:pulse 2s infinite;
     border:2px solid #0a0a14;
   }
   .leaflet-popup-content-wrapper{
-    background:var(--panel); color:var(--ink); border-radius:6px;
+    background:#16213e; color:var(--ink); border-radius:6px;
+    border:1px solid var(--panel-brd);
     font-family:'JetBrains Mono', monospace; font-size:12px;
   }
-  .leaflet-popup-tip{ background:var(--panel); }
+  .leaflet-popup-tip{ background:#16213e; }
+  .leaflet-control-zoom{ border:none !important; margin-bottom:14px !important; }
+  .leaflet-control-zoom a{
+    background:var(--panel) !important; color:var(--ink) !important;
+    border:1px solid var(--panel-brd) !important;
+    backdrop-filter:blur(8px);
+  }
+  .leaflet-control-zoom a:hover{ color:var(--accent-hi) !important; }
+
+  @keyframes dropIn{ from{ opacity:0; transform:translateY(-16px);} to{ opacity:1; transform:none;} }
+  @keyframes riseIn{ from{ opacity:0; transform:translateY(16px);} to{ opacity:1; transform:none;} }
+  @keyframes slideIn{ from{ opacity:0; transform:translateX(20px);} to{ opacity:1; transform:none;} }
+
+  /* ── Mobile ─────────────────────────────────────────────── */
+  @media (max-width: 720px){
+    body{ overflow-y:auto; }
+    header.hud{ flex-wrap:wrap; gap:8px; padding:10px 14px; }
+    nav{ gap:14px; }
+    .stats.hud{ left:12px; right:12px; bottom:auto; top:74px; min-width:0; padding:14px 16px 12px; }
+    .counter{ font-size:44px; }
+    .leaderboard.hud{
+      position:fixed; left:12px; right:12px; width:auto;
+      top:auto; bottom:12px; max-height:34vh;
+    }
+    footer{ display:none; }
+  }
 </style>
 </head>
 <body>
 
-<div class="grid-overlay"></div>
+<div id="map"></div>
+<div class="fx"></div>
 
-<header>
+<header class="hud">
   <div class="brand">⚔ KRAKEN PRIME<span>live fleet</span></div>
   <nav>
+    <span class="conn" id="conn"><span class="conn-dot"></span><span id="conn-txt">online</span></span>
     <a href="https://github.com/syskraken" target="_blank">GitHub</a>
     <a href="https://discord.gg/jV7ymDtH7F" target="_blank">Discord</a>
     <a href="/privacy">Privacy</a>
   </nav>
 </header>
 
-<section class="hero">
-  <div>
-    <div class="eyebrow"><span class="pulse-dot"></span> currently deployed</div>
-    <div class="counter" id="counter">–</div>
-    <div class="counter-label">captains with the app open right now</div>
+<div class="stats hud">
+  <div class="eyebrow"><span class="pulse-dot"></span> currently deployed</div>
+  <div class="counter" id="counter">–</div>
+  <div class="counter-label">captains with the app open right now</div>
+  <div class="substats">
+    <div class="substat">
+      <div class="num" id="region-count">–</div>
+      <div class="lbl">regions</div>
+    </div>
+    <div class="substat">
+      <div class="num" id="installs-count">–</div>
+      <div class="lbl">total installs</div>
+    </div>
   </div>
-  <div class="regions-count">
-    <div class="num" id="region-count">–</div>
-    <div class="lbl">regions represented</div>
-  </div>
-  <div class="regions-count">
-    <div class="num" id="installs-count">–</div>
-    <div class="lbl">total installs</div>
-  </div>
-</section>
+</div>
 
-<div id="map"></div>
-
-<div class="leaderboard">
-  <h2>By region</h2>
-  <div id="lb-body"><div class="empty-note">Loading…</div></div>
+<div class="leaderboard hud">
+  <h2>By region <span class="updated" id="updated"></span></h2>
+  <div class="lb-scroll" id="lb-body"><div class="empty-note">Loading…</div></div>
 </div>
 
 <footer>
-  Locations are approximated automatically from IP address (city-level, not exact).
-  See the <a href="/privacy">privacy policy</a> for what's collected and why.
+  Locations approximated from IP (city-level, not exact) · <a href="/privacy">privacy policy</a>
 </footer>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -181,46 +241,109 @@
   const API_BASE = "https://kraken.protectiva.site";
   const POLL_MS = 5000;
 
-  const map = L.map('map', { zoomControl: true, attributionControl: false, worldCopyJump: true })
-    .setView([20, 10], 2);
+  // ── Global map: one world, no repeats, fitted to viewport ──
+  const WORLD = L.latLngBounds([[-58, -180], [78, 180]]);
+
+  const map = L.map('map', {
+    zoomControl: false,
+    attributionControl: false,
+    worldCopyJump: false,
+    zoomSnap: 0.25,          // allows fractional zoom so the whole world fits exactly
+    minZoom: 1.5,
+    maxZoom: 10,
+    maxBounds: [[-85, -195], [85, 195]],
+    maxBoundsViscosity: 0.9,
+  });
+
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
 
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd', maxZoom: 12
+    subdomains: 'abcd',
+    maxZoom: 12,
+    noWrap: true,            // single copy of the world — no tiling repeats
+    bounds: [[-90, -180], [90, 180]],
   }).addTo(map);
 
+  function fitWorld(){ map.fitBounds(WORLD, { animate: false }); }
+  fitWorld();
+
+  // Re-fit on resize, but stop auto-fitting once the user zooms/pans themselves.
+  let userMoved = false;
+  map.on('zoomstart dragstart', (e) => { if (e && e.originalEvent) userMoved = true; });
+  let rT;
+  window.addEventListener('resize', () => {
+    clearTimeout(rT);
+    rT = setTimeout(() => { if (!userMoved) fitWorld(); }, 150);
+  });
+
+  // ── Helpers ────────────────────────────────────────────────
+  function flagEmoji(code){
+    if (!code || code.length !== 2 || code === '??') return '🌐';
+    return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1A5 + c.charCodeAt(0)));
+  }
+  function esc(s){
+    return String(s ?? '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // Animated counter tween
+  const counterEl = document.getElementById('counter');
+  let shownTotal = null;
+  function setCounter(target){
+    if (shownTotal === null){ shownTotal = target; counterEl.textContent = target.toLocaleString(); return; }
+    const from = shownTotal, diff = target - from;
+    if (diff === 0) return;
+    const t0 = performance.now(), dur = 500;
+    function step(t){
+      const k = Math.min(1, (t - t0) / dur);
+      const eased = 1 - Math.pow(1 - k, 3);
+      counterEl.textContent = Math.round(from + diff * eased).toLocaleString();
+      if (k < 1) requestAnimationFrame(step);
+      else shownTotal = target;
+    }
+    requestAnimationFrame(step);
+  }
+
+  const connEl = document.getElementById('conn');
+  const connTxt = document.getElementById('conn-txt');
+  function setConn(ok){
+    connEl.classList.toggle('down', !ok);
+    connTxt.textContent = ok ? 'online' : 'offline';
+  }
+
   const markers = {};   // client_id -> L.marker
+  const icon = L.divIcon({ className: '', html: '<div class="kraken-marker"></div>', iconSize: [12, 12] });
 
   async function refresh(){
     try{
       const res = await fetch(`${API_BASE}/api/active`, { cache: "no-store" });
       const data = await res.json();
+      setConn(true);
 
-      document.getElementById('counter').textContent = data.total.toLocaleString();
+      setCounter(data.total);
       document.getElementById('region-count').textContent = data.regions.length;
       document.getElementById('installs-count').textContent = (data.total_installs ?? 0).toLocaleString();
+      document.getElementById('updated').textContent =
+        'updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
+      // One marker per active user at their city-level location.
       const seen = new Set();
-      const icon = L.divIcon({ className: '', html: '<div class="kraken-marker"></div>', iconSize:[14,14] });
-
-      // One marker per active user, plotted at their actual (city-level) location.
       for(const p of data.points){
         seen.add(p.id);
-        const label = p.city ? `${p.city}, ${p.country}` : (p.country || 'Unknown');
+        const label = p.city ? `${esc(p.city)}, ${esc(p.country)}` : esc(p.country || 'Unknown');
+        const popup = `<b>${flagEmoji(p.country_code)} ${label}</b>`;
         if(markers[p.id]){
           markers[p.id].setLatLng([p.lat, p.lon]);
-          markers[p.id].setPopupContent(`<b>${label}</b>`);
+          markers[p.id].setPopupContent(popup);
         } else {
-          const m = L.marker([p.lat, p.lon], { icon }).addTo(map)
-            .bindPopup(`<b>${label}</b>`);
-          markers[p.id] = m;
+          markers[p.id] = L.marker([p.lat, p.lon], { icon }).addTo(map).bindPopup(popup);
         }
       }
-      // Remove markers for users who dropped off
       for(const id of Object.keys(markers)){
         if(!seen.has(id)){ map.removeLayer(markers[id]); delete markers[id]; }
       }
 
-      // Leaderboard — aggregated by country, not by individual user
+      // Leaderboard — aggregated by country
       const sorted = [...data.regions].sort((a,b) => b.count - a.count);
       const body = document.getElementById('lb-body');
       if(sorted.length === 0){
@@ -229,13 +352,14 @@
         const max = sorted[0].count;
         body.innerHTML = sorted.map(r => `
           <div class="lb-row">
-            <div class="lb-name">${r.name}</div>
+            <div class="lb-flag">${flagEmoji(r.code)}</div>
+            <div class="lb-name">${esc(r.name)}</div>
             <div class="lb-bar-track"><div class="lb-bar" style="width:${(r.count/max*100).toFixed(0)}%"></div></div>
             <div class="lb-count">${r.count}</div>
           </div>`).join('');
       }
     } catch(e){
-      document.getElementById('counter').textContent = '—';
+      setConn(false);
       console.warn('Fleet tracker: could not reach API', e);
     }
   }
