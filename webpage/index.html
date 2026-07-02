@@ -241,18 +241,20 @@
   const API_BASE = "https://kraken.protectiva.site";
   const POLL_MS = 5000;
 
-  // ── Global map: one world, no repeats, fitted to viewport ──
-  const WORLD = L.latLngBounds([[-58, -180], [78, 180]]);
-
+  // ── Google-Maps-style map ──────────────────────────────────
+  // The world wraps horizontally (repeats side-to-side like Google Maps),
+  // so you can zoom out and pan freely. Only the vertical axis is clamped
+  // so you never see gray above/below the poles.
   const map = L.map('map', {
     zoomControl: false,
     attributionControl: false,
-    worldCopyJump: false,
-    zoomSnap: 0.25,          // allows fractional zoom so the whole world fits exactly
-    minZoom: 1.5,
+    worldCopyJump: true,     // markers/view jump seamlessly across world copies
+    zoomSnap: 0.25,
+    zoomDelta: 0.5,
     maxZoom: 10,
-    maxBounds: [[-85, -195], [85, 195]],
-    maxBoundsViscosity: 0.9,
+    // Clamp latitude only; longitude is infinite so the world can wrap.
+    maxBounds: [[-85.05, -Infinity], [85.05, Infinity]],
+    maxBoundsViscosity: 1.0,
   });
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -260,26 +262,37 @@
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     subdomains: 'abcd',
     maxZoom: 12,
-    noWrap: true,            // single copy of the world — no tiling repeats
-    bounds: [[-90, -180], [90, 180]],
+    // noWrap intentionally OFF → tiles repeat horizontally like Google Maps
   }).addTo(map);
 
-  function fitWorld(){ map.fitBounds(WORLD, { animate: false }); }
-  fitWorld();
+  // Minimum zoom = whatever keeps the map filling the viewport VERTICALLY.
+  // (Horizontal is always filled thanks to wrapping.) Web-mercator world
+  // height in pixels is 256 * 2^zoom.
+  function applyMinZoom(reset){
+    const h = map.getSize().y || window.innerHeight;
+    const z = Math.ceil(Math.log2(h / 256) * 4) / 4;   // snapped up to 0.25
+    map.setMinZoom(z);
+    if (reset || map.getZoom() < z){
+      map.setView([20, 20], z, { animate: false });
+    }
+  }
+  applyMinZoom(true);
 
-  // Re-fit on resize, but stop auto-fitting once the user zooms/pans themselves.
   let userMoved = false;
   map.on('zoomstart dragstart', (e) => { if (e && e.originalEvent) userMoved = true; });
   let rT;
   window.addEventListener('resize', () => {
     clearTimeout(rT);
-    rT = setTimeout(() => { if (!userMoved) fitWorld(); }, 150);
+    rT = setTimeout(() => applyMinZoom(!userMoved), 150);
   });
 
   // ── Helpers ────────────────────────────────────────────────
-  function flagEmoji(code){
-    if (!code || code.length !== 2 || code === '??') return '🌐';
-    return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1A5 + c.charCodeAt(0)));
+  // Flag emoji don't render on Windows (they show as plain letters),
+  // so use small flag images instead.
+  function flagImg(code){
+    if (!code || code.length !== 2 || code === '??') return '<span>🌐</span>';
+    const cc = code.toLowerCase();
+    return `<img src="https://flagcdn.com/20x15/${cc}.png" width="20" height="15" alt="${cc}" style="border-radius:2px;vertical-align:-2px;">`;
   }
   function esc(s){
     return String(s ?? '').replace(/[&<>"']/g, c =>
@@ -331,7 +344,7 @@
       for(const p of data.points){
         seen.add(p.id);
         const label = p.city ? `${esc(p.city)}, ${esc(p.country)}` : esc(p.country || 'Unknown');
-        const popup = `<b>${flagEmoji(p.country_code)} ${label}</b>`;
+        const popup = `<b>${flagImg(p.country_code)} ${label}</b>`;
         if(markers[p.id]){
           markers[p.id].setLatLng([p.lat, p.lon]);
           markers[p.id].setPopupContent(popup);
@@ -352,7 +365,7 @@
         const max = sorted[0].count;
         body.innerHTML = sorted.map(r => `
           <div class="lb-row">
-            <div class="lb-flag">${flagEmoji(r.code)}</div>
+            <div class="lb-flag">${flagImg(r.code)}</div>
             <div class="lb-name">${esc(r.name)}</div>
             <div class="lb-bar-track"><div class="lb-bar" style="width:${(r.count/max*100).toFixed(0)}%"></div></div>
             <div class="lb-count">${r.count}</div>
