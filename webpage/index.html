@@ -171,7 +171,7 @@
 </div>
 
 <footer>
-  Locations are approximated automatically from IP address (country-level only).
+  Locations are approximated automatically from IP address (city-level, not exact).
   See the <a href="/privacy">privacy policy</a> for what's collected and why.
 </footer>
 
@@ -188,9 +188,7 @@
     subdomains: 'abcd', maxZoom: 12
   }).addTo(map);
 
-  const markers = {};   // code -> L.circleMarker
-
-  function radiusFor(count){ return 6 + Math.sqrt(count) * 4; }
+  const markers = {};   // client_id -> L.marker
 
   async function refresh(){
     try{
@@ -202,27 +200,28 @@
       document.getElementById('installs-count').textContent = (data.total_installs ?? 0).toLocaleString();
 
       const seen = new Set();
-      const sorted = [...data.regions].sort((a,b) => b.count - a.count);
+      const icon = L.divIcon({ className: '', html: '<div class="kraken-marker"></div>', iconSize:[14,14] });
 
-      // Update / add markers
-      for(const r of sorted){
-        seen.add(r.code);
-        const icon = L.divIcon({ className: '', html: '<div class="kraken-marker"></div>', iconSize:[14,14] });
-        if(markers[r.code]){
-          markers[r.code].marker.setLatLng([r.lat, r.lon]);
-          markers[r.code].marker.setPopupContent(`<b>${r.name}</b><br>${r.count} online`);
+      // One marker per active user, plotted at their actual (city-level) location.
+      for(const p of data.points){
+        seen.add(p.id);
+        const label = p.city ? `${p.city}, ${p.country}` : (p.country || 'Unknown');
+        if(markers[p.id]){
+          markers[p.id].setLatLng([p.lat, p.lon]);
+          markers[p.id].setPopupContent(`<b>${label}</b>`);
         } else {
-          const m = L.marker([r.lat, r.lon], { icon }).addTo(map)
-            .bindPopup(`<b>${r.name}</b><br>${r.count} online`);
-          markers[r.code] = { marker: m };
+          const m = L.marker([p.lat, p.lon], { icon }).addTo(map)
+            .bindPopup(`<b>${label}</b>`);
+          markers[p.id] = m;
         }
       }
-      // Remove markers for regions that dropped to zero
-      for(const code of Object.keys(markers)){
-        if(!seen.has(code)){ map.removeLayer(markers[code].marker); delete markers[code]; }
+      // Remove markers for users who dropped off
+      for(const id of Object.keys(markers)){
+        if(!seen.has(id)){ map.removeLayer(markers[id]); delete markers[id]; }
       }
 
-      // Leaderboard
+      // Leaderboard — aggregated by country, not by individual user
+      const sorted = [...data.regions].sort((a,b) => b.count - a.count);
       const body = document.getElementById('lb-body');
       if(sorted.length === 0){
         body.innerHTML = '<div class="empty-note">No one on the map right now — could be you.</div>';
