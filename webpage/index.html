@@ -157,6 +157,10 @@
     <div class="num" id="region-count">–</div>
     <div class="lbl">regions represented</div>
   </div>
+  <div class="regions-count">
+    <div class="num" id="installs-count">–</div>
+    <div class="lbl">total installs</div>
+  </div>
 </section>
 
 <div id="map"></div>
@@ -167,7 +171,7 @@
 </div>
 
 <footer>
-  Locations are self-selected by each user, not detected from IP or device GPS.
+  Locations are approximated automatically from IP address (country-level only).
   See the <a href="/privacy">privacy policy</a> for what's collected and why.
 </footer>
 
@@ -195,6 +199,7 @@
 
       document.getElementById('counter').textContent = data.total.toLocaleString();
       document.getElementById('region-count').textContent = data.regions.length;
+      document.getElementById('installs-count').textContent = (data.total_installs ?? 0).toLocaleString();
 
       const seen = new Set();
       const sorted = [...data.regions].sort((a,b) => b.count - a.count);

@@ -1,9 +1,11 @@
+import json
 import time
 import threading
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
+import requests
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -12,8 +14,21 @@ from pydantic import BaseModel
 HEARTBEAT_TIMEOUT_S = 90     # no heartbeat in this long → considered offline
 CLEANUP_INTERVAL_S  = 15
 WEBPAGE_DIR = Path(__file__).parent / "webpage"
+INSTALLS_FILE = Path(__file__).parent / "installs.json"   # persisted set of client_ids ever seen
 
-# ── Region reference table (user-picked, not detected) ─────────
+# If the server sits behind a reverse proxy (nginx, Cloudflare, etc.), the
+# real client IP arrives in a header instead of the raw socket address.
+# Set this to the header your proxy sets, or None to trust request.client.host.
+TRUSTED_FORWARD_HEADER = "X-Forwarded-For"   # set to None if not behind a proxy
+
+# Free IP → country lookup. No API key needed, but it's rate limited
+# (~45 req/min) — that's why every IP is geolocated only once and cached
+# in memory for the life of the process. For higher volume, swap this
+# for a local MaxMind GeoLite2 database instead of a network call.
+GEOIP_URL = "http://ip-api.com/json/{ip}?fields=status,countryCode"
+GEOIP_TIMEOUT_S = 3
+
+# ── Region reference table (for plotting a country on the map) ─
 # Centroid coordinates are approximate — good enough for a "fleet map",
 # not for anything precision-sensitive. Extend freely.
 REGIONS = {
@@ -50,7 +65,9 @@ REGIONS = {
 
 # ── State ────────────────────────────────────────────────────
 _lock = threading.Lock()
-_sessions: dict[str, dict] = {}   # client_id -> {"region": code|None, "last_seen": ts}
+_sessions: dict[str, dict] = {}     # client_id -> {"region": code|None, "last_seen": ts}
+_geo_cache: dict[str, Optional[str]] = {}   # ip -> country code (or None), cached in memory only
+_known_client_ids: set[str] = set() # every client_id ever seen -> "installs"
 
 app = FastAPI(title="KRAKEN PRIME Fleet Tracker")
 app.add_middleware(
@@ -61,23 +78,92 @@ app.add_middleware(
 )
 
 
+# ── Persisted install count ─────────────────────────────────
+# We only ever persist client_ids (random UUIDs) to disk — never IPs —
+# so the count survives server restarts without building an IP log.
+
+def _load_installs():
+    if INSTALLS_FILE.exists():
+        try:
+            with open(INSTALLS_FILE) as f:
+                data = json.load(f)
+            return set(data.get("client_ids", []))
+        except Exception:
+            return set()
+    return set()
+
+
+def _save_installs():
+    try:
+        with open(INSTALLS_FILE, "w") as f:
+            json.dump({"client_ids": sorted(_known_client_ids)}, f)
+    except OSError:
+        pass
+
+
+_known_client_ids = _load_installs()
+
+
+# ── IP geolocation ───────────────────────────────────────────
+
+def _client_ip(request: Request) -> str:
+    if TRUSTED_FORWARD_HEADER:
+        fwd = request.headers.get(TRUSTED_FORWARD_HEADER)
+        if fwd:
+            return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _geolocate(ip: str) -> Optional[str]:
+    """Return an ISO country code for an IP, or None if it can't be
+    resolved (private/loopback IP, lookup failure, unknown country)."""
+    if ip in _geo_cache:
+        return _geo_cache[ip]
+
+    if ip in ("unknown", "127.0.0.1", "::1") or ip.startswith(("10.", "192.168.", "172.")):
+        _geo_cache[ip] = None
+        return None
+
+    code = None
+    try:
+        resp = requests.get(GEOIP_URL.format(ip=ip), timeout=GEOIP_TIMEOUT_S)
+        data = resp.json()
+        if data.get("status") == "success":
+            cc = data.get("countryCode")
+            if cc in REGIONS:
+                code = cc
+    except Exception:
+        code = None
+
+    _geo_cache[ip] = code
+    return code
+
+
 class Heartbeat(BaseModel):
     client_id: str
-    region: Optional[str] = None   # ISO code the user picked, or None if opted out of the map
 
 
 @app.post("/api/heartbeat")
-def heartbeat(hb: Heartbeat):
-    region = hb.region if hb.region in REGIONS else None
+def heartbeat(hb: Heartbeat, request: Request):
+    ip = _client_ip(request)
+    region = _geolocate(ip)
+
+    is_new = False
     with _lock:
+        if hb.client_id not in _known_client_ids:
+            _known_client_ids.add(hb.client_id)
+            is_new = True
         _sessions[hb.client_id] = {"region": region, "last_seen": time.time()}
+    if is_new:
+        _save_installs()   # only touches disk the first time we see a client_id
+
     return {"ok": True}
 
 
 @app.post("/api/leave")
 def leave(hb: Heartbeat):
-    """Optional: called when the app closes, so the counter drops instantly
-    instead of waiting for the heartbeat timeout."""
+    """Called when the app closes, so the counter drops instantly instead
+    of waiting for the heartbeat timeout."""
     with _lock:
         _sessions.pop(hb.client_id, None)
     return {"ok": True}
@@ -95,19 +181,14 @@ def active():
             total += 1
             if sess["region"]:
                 counts[sess["region"]] = counts.get(sess["region"], 0) + 1
+        total_installs = len(_known_client_ids)
 
     regions = [
         {"code": code, "name": REGIONS[code][0], "lat": REGIONS[code][1],
          "lon": REGIONS[code][2], "count": c}
         for code, c in counts.items()
     ]
-    return {"total": total, "regions": regions}
-
-@app.head("/api/regions")
-@app.get("/api/regions")
-def region_list():
-    """So the client's dropdown always matches the server's supported list."""
-    return [{"code": c, "name": n} for c, (n, _, _) in sorted(REGIONS.items(), key=lambda kv: kv[1][0])]
+    return {"total": total, "regions": regions, "total_installs": total_installs}
 
 
 def _cleanup_loop():
