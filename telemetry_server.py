@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import time
 import threading
 from pathlib import Path
@@ -15,7 +16,17 @@ from pydantic import BaseModel
 HEARTBEAT_TIMEOUT_S = 90     # no heartbeat in this long → considered offline
 CLEANUP_INTERVAL_S  = 15
 WEBPAGE_DIR = Path(__file__).parent / "webpage"
-INSTALLS_FILE = Path(__file__).parent / "installs.json"   # persisted set of client_ids ever seen
+INSTALLS_FILE = Path(__file__).parent / "installs.json"   # local fallback if Firebase is unavailable
+
+# Firebase (Firestore) keeps the install set off this machine, so it
+# survives redeploys and disk wipes. Point FIREBASE_CREDENTIALS at the
+# service-account JSON downloaded from the Firebase console; if the file
+# is missing or firebase-admin isn't installed, we fall back to the
+# local installs.json like before.
+FIREBASE_CREDENTIALS = os.environ.get(
+    "FIREBASE_CREDENTIALS", str(Path(__file__).parent / "firebase_key.json")
+)
+INSTALLS_COLLECTION = "installs"   # one Firestore doc per client_id
 
 # If the server sits behind a reverse proxy (nginx, Cloudflare, etc.), the
 # real client IP arrives in a header instead of the raw socket address.
@@ -47,10 +58,26 @@ app.add_middleware(
 
 
 # ── Persisted install count ─────────────────────────────────
-# We only ever persist client_ids (random UUIDs) to disk — never IPs —
-# so the count survives server restarts without building an IP log.
+# We only ever persist client_ids (random UUIDs) — never IPs — so the
+# count survives server restarts without building an IP log.
 
-def _load_installs():
+_firestore = None
+try:
+    if Path(FIREBASE_CREDENTIALS).exists():
+        import firebase_admin
+        from firebase_admin import credentials, firestore
+
+        firebase_admin.initialize_app(credentials.Certificate(FIREBASE_CREDENTIALS))
+        _firestore = firestore.client()
+        print("Telemetry: install count persisted to Firestore")
+    else:
+        print(f"Telemetry: {FIREBASE_CREDENTIALS} not found, using local installs.json")
+except Exception as e:
+    print(f"Telemetry: Firebase init failed ({e}), using local installs.json")
+    _firestore = None
+
+
+def _load_installs_local():
     if INSTALLS_FILE.exists():
         try:
             with open(INSTALLS_FILE) as f:
@@ -61,7 +88,39 @@ def _load_installs():
     return set()
 
 
-def _save_installs():
+def _load_installs():
+    local = _load_installs_local()
+    if _firestore is None:
+        return local
+    try:
+        # list_documents() returns refs without reading the doc bodies,
+        # which keeps the read cost of a restart near zero.
+        remote = {doc.id for doc in _firestore.collection(INSTALLS_COLLECTION).list_documents()}
+    except Exception as e:
+        print(f"Telemetry: Firestore load failed ({e}), using local installs.json")
+        return local
+    # One-time migration: push any ids that only exist locally up to
+    # Firestore so nothing is lost when switching storage.
+    for cid in local - remote:
+        _record_install_remote(cid)
+    return remote | local
+
+
+def _record_install_remote(client_id):
+    if _firestore is None:
+        return
+    try:
+        from firebase_admin import firestore
+        _firestore.collection(INSTALLS_COLLECTION).document(client_id).set(
+            {"first_seen": firestore.SERVER_TIMESTAMP}
+        )
+    except Exception:
+        pass   # local file still has it; next restart re-syncs
+
+
+def _save_installs(new_client_id=None):
+    if new_client_id:
+        _record_install_remote(new_client_id)
     try:
         with open(INSTALLS_FILE, "w") as f:
             json.dump({"client_ids": sorted(_known_client_ids)}, f)
@@ -70,6 +129,8 @@ def _save_installs():
 
 
 _known_client_ids = _load_installs()
+if _known_client_ids and not INSTALLS_FILE.exists():
+    _save_installs()   # seed the local fallback from Firestore
 
 
 # ── IP geolocation ───────────────────────────────────────────
@@ -137,7 +198,7 @@ def heartbeat(hb: Heartbeat, request: Request):
             is_new = True
         _sessions[hb.client_id] = {"geo": geo, "last_seen": time.time()}
     if is_new:
-        _save_installs()   # only touches disk the first time we see a client_id
+        _save_installs(new_client_id=hb.client_id)   # first time we see this client_id
 
     return {"ok": True}
 
