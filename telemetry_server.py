@@ -63,15 +63,21 @@ app.add_middleware(
 
 _firestore = None
 try:
-    if Path(FIREBASE_CREDENTIALS).exists():
+    _cred_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+    if _cred_json or Path(FIREBASE_CREDENTIALS).exists():
         import firebase_admin
         from firebase_admin import credentials, firestore
 
-        firebase_admin.initialize_app(credentials.Certificate(FIREBASE_CREDENTIALS))
+        if _cred_json:
+            _cred = credentials.Certificate(json.loads(_cred_json))
+        else:
+            _cred = credentials.Certificate(FIREBASE_CREDENTIALS)
+        firebase_admin.initialize_app(_cred)
         _firestore = firestore.client()
         print("Telemetry: install count persisted to Firestore")
     else:
-        print(f"Telemetry: {FIREBASE_CREDENTIALS} not found, using local installs.json")
+        print(f"Telemetry: {FIREBASE_CREDENTIALS} not found and FIREBASE_CREDENTIALS_JSON "
+              "not set, using local installs.json")
 except Exception as e:
     print(f"Telemetry: Firebase init failed ({e}), using local installs.json")
     _firestore = None
@@ -244,6 +250,29 @@ def active():
         for code, info in country_counts.items()
     ]
     return {"total": total, "points": points, "regions": regions, "total_installs": total_installs}
+
+
+_START_TIME = time.time()
+
+
+@app.get("/health")
+def health():
+    """Lightweight liveness check (GET and HEAD both work). Point an
+    uptime monitor here — on Render's free tier that also keeps the
+    instance from spinning down."""
+    with _lock:
+        active = sum(
+            1 for s in _sessions.values()
+            if time.time() - s["last_seen"] <= HEARTBEAT_TIMEOUT_S
+        )
+        installs = len(_known_client_ids)
+    return {
+        "status": "ok",
+        "uptime_s": int(time.time() - _START_TIME),
+        "firestore": _firestore is not None,
+        "active_clients": active,
+        "total_installs": installs,
+    }
 
 
 def _cleanup_loop():
