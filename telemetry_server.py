@@ -254,7 +254,7 @@ def active():
 
 _START_TIME = time.time()
 
-
+@app.head("/health")
 @app.get("/health")
 def health():
     """Lightweight liveness check (GET and HEAD both work). Point an
